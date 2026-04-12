@@ -134,6 +134,14 @@ export async function suggestQuestions(sessionId: string, sourceId?: string) {
   return res.json();
 }
 
+export async function getSourceRelationships(sourceId: string) {
+  const res = await fetch(`${BASE_URL}/api/sources/${sourceId}/relationships`, {
+    method: 'POST',
+    headers: getHeaders(),
+  });
+  return res.json();
+}
+
 export async function getSourceProfile(sourceId: string) {
   const res = await fetch(`${BASE_URL}/api/sources/${sourceId}/profile`, {
     method: 'POST',

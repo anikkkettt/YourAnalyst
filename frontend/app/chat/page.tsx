@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import { useChat } from '@/hooks/useChat';
-import { getSources, suggestQuestions, getSourceSchema, exportResultCsv, getSourceProfile } from '@/lib/api';
+import { getSources, suggestQuestions, getSourceSchema, exportResultCsv, getSourceProfile, getSourceRelationships } from '@/lib/api';
 import type { DataSource, Message } from '@/lib/types';
 import { AddSourceWizard } from '@/components/AddSourceWizard';
 import {
@@ -64,6 +64,9 @@ function ChatPageInner() {
   const [mainTab, setMainTab] = useState<'chat' | 'schema' | 'relationships' | 'datasets' | 'profile' | 'pinned'>('chat');
   const [schemaData, setSchemaData] = useState<Record<string, any>>({});
   const [schemaLoading, setSchemaLoading] = useState(false);
+  const [cachedRelationships, setCachedRelationships] = useState<any[]>([]);
+  const [relHasRun, setRelHasRun] = useState(false);
+  const [relInferring, setRelInferring] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const searchParams = useSearchParams();
@@ -120,7 +123,7 @@ function ChatPageInner() {
   }, [messages, chatLoading]);
 
   useEffect(() => {
-    if ((mainTab === 'schema' || mainTab === 'relationships') && activeSources.length > 0) {
+    if (mainTab === 'schema' && activeSources.length > 0 && Object.keys(schemaData).length === 0) {
       fetchSchemaForSources(activeSources);
     }
   }, [mainTab, activeSources.length]);
@@ -327,7 +330,7 @@ function ChatPageInner() {
 
           {/* Relationships Panel */}
           {mainTab === 'relationships' && (
-            <RelationshipViewer schemaData={schemaData} loading={schemaLoading} sources={activeSources} onCopyStatus={setCopyStatus} />
+            <RelationshipViewer sources={activeSources} onCopyStatus={setCopyStatus} cachedRelationships={cachedRelationships} setCachedRelationships={setCachedRelationships} relHasRun={relHasRun} setRelHasRun={setRelHasRun} relInferring={relInferring} setRelInferring={setRelInferring} />
           )}
 
           {/* Datasets Panel */}
@@ -2218,45 +2221,56 @@ function SchemaExplorer({ schemaData, loading, sources }: { schemaData: Record<s
 // ============================================================
 // Relationship Viewer
 // ============================================================
-function RelationshipViewer({ schemaData, loading, sources, onCopyStatus }: { schemaData: Record<string, any>; loading: boolean; sources: DataSource[]; onCopyStatus: (s: string | null) => void }) {
+function RelationshipViewer({ sources, onCopyStatus, cachedRelationships, setCachedRelationships, relHasRun, setRelHasRun, relInferring, setRelInferring }: {
+  sources: DataSource[]; onCopyStatus: (s: string | null) => void;
+  cachedRelationships: any[]; setCachedRelationships: (r: any[]) => void;
+  relHasRun: boolean; setRelHasRun: (v: boolean) => void;
+  relInferring: boolean; setRelInferring: (v: boolean) => void;
+}) {
 
-  type Relationship = { fromTable: string; fromCol: string; toTable: string; toCol: string; sourceName: string; sourceId: string };
+  type InferredRel = {
+    left_table: string; right_table: string; left_column: string; right_column: string;
+    relationship_type: string; confidence_score: number;
+    confidence_breakdown: { name_similarity: number; value_overlap: number; cardinality_signal: number; id_pattern_match: number };
+    reason: string; sourceName: string; sourceId: string;
+  };
 
-  const relationships: Relationship[] = [];
+  const relationships = cachedRelationships as InferredRel[];
 
-  Object.values(schemaData).forEach(({ source, schema }: any) => {
-    if (!schema || !schema.tables) return;
-    Object.entries(schema.tables).forEach(([tname, tinfo]: [string, any]) => {
-      const cols: any[] = (tinfo as any).columns || [];
-      cols.forEach((col: any) => {
-        if (col.fk) {
-          const parts = col.fk.split('.');
-          if (parts.length >= 2) {
-            relationships.push({
-              fromTable: tname,
-              fromCol: col.name,
-              toTable: parts[parts.length - 2],
-              toCol: parts[parts.length - 1],
-              sourceName: source.name,
-              sourceId: source.source_id,
-            });
-          }
-        }
-      });
+  useEffect(() => {
+    if (sources.length === 0 || relHasRun) return;
+    let cancelled = false;
+    setRelInferring(true);
+    Promise.all(sources.map(async (s) => {
+      try {
+        const data = await getSourceRelationships(s.source_id);
+        return (data.relationships || []).map((r: any) => ({ ...r, sourceName: s.name, sourceId: s.source_id }));
+      } catch { return []; }
+    })).then(arrays => {
+      if (!cancelled) {
+        setCachedRelationships(arrays.flat());
+        setRelInferring(false);
+        setRelHasRun(true);
+      }
     });
-  });
+    return () => { cancelled = true; };
+  }, [sources.map(s => s.source_id).join(','), relHasRun]);
 
-  const copyJoinSQL = (rel: Relationship) => {
-    const sql = `SELECT *\nFROM ${rel.fromTable}\nJOIN ${rel.toTable} ON ${rel.fromTable}.${rel.fromCol} = ${rel.toTable}.${rel.toCol}`;
+  const copyJoinSQL = (rel: InferredRel) => {
+    const sql = `SELECT *\nFROM ${rel.left_table}\nJOIN ${rel.right_table} ON ${rel.left_table}.${rel.left_column} = ${rel.right_table}.${rel.right_column}`;
     navigator.clipboard.writeText(sql);
     onCopyStatus('JOIN SQL copied!');
     setTimeout(() => onCopyStatus(null), 2000);
   };
 
-  if (loading) return (
+  const confidenceColor = (score: number) => score >= 0.7 ? '#34d399' : score >= 0.5 ? '#F0B429' : '#ff716c';
+  const confidenceLabel = (score: number) => score >= 0.7 ? 'High' : score >= 0.5 ? 'Medium' : 'Low';
+
+  if (relInferring) return (
     <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 12 }}>
       <div className="pulse-dot" style={{ width: 10, height: 10 }} />
-      <span style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>Analysing relationships...</span>
+      <span style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>Analysing relationships across tables...</span>
+      <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', opacity: 0.6 }}>Comparing column names, value overlap, and cardinality</span>
     </div>
   );
 
@@ -2271,22 +2285,16 @@ function RelationshipViewer({ schemaData, loading, sources, onCopyStatus }: { sc
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ flex: 1, overflowY: 'auto', padding: '1rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
 
-        {relationships.length === 0 && Object.keys(schemaData).length > 0 && (
+        {relationships.length === 0 && relHasRun && (
           <div style={{
             background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)',
             borderRadius: 12, padding: '1.5rem', textAlign: 'center',
           }}>
             <img src="https://cdn.jsdelivr.net/npm/@tabler/icons/icons/git-branch.svg" alt="no relations" style={{ width: 36, height: 36, filter: 'brightness(0) invert(0.3)', marginBottom: 12 }} />
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', margin: '0 0 8px' }}>No explicit foreign keys detected</p>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', margin: '0 0 8px' }}>No relationships detected</p>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.8125rem', margin: 0 }}>
-              Try asking the AI: <em style={{ color: 'var(--accent)' }}>"What columns can I use to join these tables?"</em>
+              The inference engine compared column names, value overlap, and cardinality across all table pairs but found no confident matches. This usually means tables don&apos;t share joinable columns.
             </p>
-          </div>
-        )}
-
-        {relationships.length === 0 && Object.keys(schemaData).length === 0 && (
-          <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
-            Switch to <strong style={{ color: 'var(--accent)' }}>Schema Explorer</strong> first to load schema data, then come back here.
           </div>
         )}
 
@@ -2309,22 +2317,29 @@ function RelationshipViewer({ schemaData, loading, sources, onCopyStatus }: { sc
               onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = 'rgba(240,180,41,0.25)'; }}
               onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'rgba(255,255,255,0.08)'; }}
               >
+                {/* Header badges */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 10, flexWrap: 'wrap' }}>
                   <span style={{ fontSize: '0.7rem', background: 'var(--accent-dim)', color: 'var(--accent)', borderRadius: 4, padding: '1px 6px', fontWeight: 700 }}>
                     {rel.sourceName}
                   </span>
+                  <span style={{ fontSize: '0.6rem', borderRadius: 4, padding: '1px 6px', fontWeight: 600, background: 'rgba(96,165,250,0.12)', color: '#60A5FA' }}>
+                    {rel.relationship_type.replace(/_/g, ' ').toUpperCase()}
+                  </span>
+                  <span style={{ marginLeft: 'auto', fontSize: '0.7rem', fontWeight: 700, color: confidenceColor(rel.confidence_score) }}>
+                    {Math.round(rel.confidence_score * 100)}% {confidenceLabel(rel.confidence_score)}
+                  </span>
                 </div>
 
-                {/* Relationship arrow diagram */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+                {/* Arrow diagram */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
                   <div style={{
                     background: 'rgba(240,180,41,0.08)', border: '1px solid rgba(240,180,41,0.2)',
                     borderRadius: 8, padding: '6px 12px',
                     fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--text-primary)',
                   }}>
-                    <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{rel.fromTable}</span>
+                    <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{rel.left_table}</span>
                     <span style={{ color: 'var(--text-muted)' }}>.</span>
-                    <span style={{ color: 'var(--text-secondary)' }}>{rel.fromCol}</span>
+                    <span style={{ color: 'var(--text-secondary)' }}>{rel.left_column}</span>
                   </div>
 
                   <div style={{ display: 'flex', alignItems: 'center', gap: 2, color: '#60A5FA' }}>
@@ -2337,11 +2352,43 @@ function RelationshipViewer({ schemaData, loading, sources, onCopyStatus }: { sc
                     borderRadius: 8, padding: '6px 12px',
                     fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--text-primary)',
                   }}>
-                    <span style={{ color: '#60A5FA', fontWeight: 600 }}>{rel.toTable}</span>
+                    <span style={{ color: '#60A5FA', fontWeight: 600 }}>{rel.right_table}</span>
                     <span style={{ color: 'var(--text-muted)' }}>.</span>
-                    <span style={{ color: 'var(--text-secondary)' }}>{rel.toCol}</span>
+                    <span style={{ color: 'var(--text-secondary)' }}>{rel.right_column}</span>
                   </div>
                 </div>
+
+                {/* Confidence breakdown bars */}
+                {rel.confidence_breakdown && (
+                  <div style={{
+                    display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 16px',
+                    marginBottom: 10, padding: '8px 10px',
+                    background: 'rgba(255,255,255,0.02)', borderRadius: 8,
+                    border: '1px solid rgba(255,255,255,0.05)',
+                  }}>
+                    {([
+                      ['Name similarity', rel.confidence_breakdown.name_similarity],
+                      ['Value overlap', rel.confidence_breakdown.value_overlap],
+                      ['Cardinality', rel.confidence_breakdown.cardinality_signal],
+                      ['ID pattern', rel.confidence_breakdown.id_pattern_match],
+                    ] as [string, number][]).map(([label, value]) => (
+                      <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', width: 90, flexShrink: 0 }}>{label}</span>
+                        <div style={{ flex: 1, height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 2, overflow: 'hidden' }}>
+                          <div style={{ width: `${Math.round(value * 100)}%`, height: '100%', background: confidenceColor(value), borderRadius: 2, transition: 'width 0.3s' }} />
+                        </div>
+                        <span style={{ fontSize: '0.6rem', fontWeight: 600, color: confidenceColor(value), width: 28, textAlign: 'right' }}>
+                          {Math.round(value * 100)}%
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Reason */}
+                <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', margin: '0 0 10px', lineHeight: 1.5, fontStyle: 'italic' }}>
+                  {rel.reason}
+                </p>
 
                 {/* JOIN SQL preview */}
                 <div style={{
@@ -2351,10 +2398,10 @@ function RelationshipViewer({ schemaData, loading, sources, onCopyStatus }: { sc
                   lineHeight: 1.6, marginBottom: 10,
                 }}>
                   <span style={{ color: '#60A5FA' }}>SELECT</span> *{'\n'}
-                  <span style={{ color: '#60A5FA' }}>FROM</span> {rel.fromTable}{'\n'}
-                  <span style={{ color: '#60A5FA' }}>JOIN</span> {rel.toTable}{' '}
+                  <span style={{ color: '#60A5FA' }}>FROM</span> {rel.left_table}{'\n'}
+                  <span style={{ color: '#60A5FA' }}>JOIN</span> {rel.right_table}{' '}
                   <span style={{ color: '#60A5FA' }}>ON</span>{' '}
-                  {rel.fromTable}.{rel.fromCol} = {rel.toTable}.{rel.toCol}
+                  {rel.left_table}.{rel.left_column} = {rel.right_table}.{rel.right_column}
                 </div>
 
                 <button
@@ -2371,10 +2418,10 @@ function RelationshipViewer({ schemaData, loading, sources, onCopyStatus }: { sc
         )}
       </div>
 
-      {/* Footer tip */}
+      {/* Footer */}
       <div style={{ padding: '0.625rem 1.5rem', borderTop: '1px solid rgba(255,255,255,0.06)', flexShrink: 0 }}>
         <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.7rem' }}>
-          Relationships are detected from foreign key metadata in the schema. Click <strong style={{ color: 'var(--accent)' }}>Schema Explorer</strong> to see column details.
+          Relationships are inferred using 4 signals: column name similarity, value overlap (Jaccard), cardinality analysis, and ID naming patterns.
         </p>
       </div>
     </div>

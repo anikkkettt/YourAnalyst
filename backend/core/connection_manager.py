@@ -81,9 +81,14 @@ class ConnectionManager:
     def test_connection(self, db_type: DatabaseKind, params: dict) -> dict:
         """Verify connectivity and return table metadata without persisting state."""
         try:
-            if db_type in (DatabaseKind.CSV, DatabaseKind.EXCEL):
+            if db_type == DatabaseKind.CSV:
                 tname = params.get("file_path", "data.csv").split("/")[-1]
                 return {"success": True, "error": None, "table_count": 1, "tables": [tname]}
+
+            if db_type == DatabaseKind.EXCEL:
+                xl = pd.ExcelFile(params["file_path"])
+                sheets = xl.sheet_names
+                return {"success": True, "error": None, "table_count": len(sheets), "tables": sheets}
 
             if db_type == DatabaseKind.TURSO:
                 client = self._create_turso_client(params)
@@ -127,13 +132,21 @@ class ConnectionManager:
                               datetime.utcnow().isoformat(), 1, session_id, params)
 
         elif db_type == DatabaseKind.EXCEL:
-            df = pd.read_excel(params["file_path"])
+            sheets = pd.read_excel(params["file_path"], sheet_name=None)
             conn = duckdb.connect()
-            conn.register(safe_name, df)
-            schema = self._schema_from_df(df, safe_name)
+            all_tables = {}
+            first_df = None
+            for sheet_name, df in sheets.items():
+                tname = self._safe_name(str(sheet_name))
+                conn.register(tname, df)
+                sheet_schema = self._schema_from_df(df, tname)
+                all_tables.update(sheet_schema["tables"])
+                if first_df is None:
+                    first_df = df
+            schema = {"tables": all_tables}
             return LiveSource(source_id, name, safe_name, db_type, "excel://{}".format(name),
-                              None, conn, df, schema, True,
-                              datetime.utcnow().isoformat(), 1, session_id, params)
+                              None, conn, first_df, schema, True,
+                              datetime.utcnow().isoformat(), len(schema["tables"]), session_id, params)
 
         elif db_type == DatabaseKind.TURSO:
             client = self._create_turso_client(params)
@@ -159,12 +172,23 @@ class ConnectionManager:
                               datetime.utcnow().isoformat(), len(schema["tables"]), session_id, params)
 
     def _schema_from_df(self, df: pd.DataFrame, table_name: str) -> dict:
-        """Derive column metadata from a pandas DataFrame."""
+        """Derive column metadata from a pandas DataFrame with heuristic PK detection."""
         type_map = {"int64": "INTEGER", "float64": "FLOAT", "object": "STRING",
                     "bool": "BOOLEAN", "datetime64[ns]": "TIMESTAMP"}
-        cols = [{"name": c, "type": type_map.get(str(df[c].dtype), "STRING"),
-                 "pk": False, "fk": None, "nullable": bool(df[c].isna().any())}
-                for c in df.columns]
+        cols = []
+        for c in df.columns:
+            is_pk = False
+            cl = c.lower().strip()
+            if cl == 'id' or cl == f'{table_name}_id' or cl == f'{table_name}id':
+                if df[c].is_unique and df[c].notna().all():
+                    is_pk = True
+            cols.append({
+                "name": c,
+                "type": type_map.get(str(df[c].dtype), "STRING"),
+                "pk": is_pk,
+                "fk": None,
+                "nullable": bool(df[c].isna().any()),
+            })
         return {"tables": {table_name: {"row_count": len(df), "columns": cols}}}
 
     def _schema_from_engine(self, engine, selected_tables: list = None) -> dict:

@@ -285,6 +285,19 @@ async def clone_session_sources(payload: dict):
         return JSONResponse(status_code=400, content={"error": str(exc)})
 
 
+@router.post("/api/sources/{source_id}/relationships")
+async def get_relationships(source_id: str):
+    try:
+        source = lookup_source(source_id)
+        from core.relationship_inference import infer_relationships
+        relationships = infer_relationships(source)
+        return {"relationships": relationships}
+    except KeyError:
+        return JSONResponse(status_code=404, content={"error": "Source not found"})
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
 @router.delete("/api/sources/{source_id}")
 async def disconnect(source_id: str):
     try:
