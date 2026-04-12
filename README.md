@@ -20,7 +20,7 @@ A self-service analytics platform where you type a question in plain English and
 
 <br/>
 
-### 🌐 Frontend &nbsp;→&nbsp; [https://your-analyst-3z2p.vercel.app](https://your-analyst-3z2p.vercel.app/)
+### 🌐 Frontend &nbsp;→&nbsp; [https://your-analyst-nine.vercel.app](https://your-analyst-nine.vercel.app/)
 ### ⚙️ Backend API &nbsp;→&nbsp; [https://youranalyst-8985.onrender.com](https://youranalyst-8985.onrender.com/)
 
 <sub>Enter any username to sign in — no password needed.</sub>
