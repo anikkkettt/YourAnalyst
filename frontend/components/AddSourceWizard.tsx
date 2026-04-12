@@ -3,8 +3,6 @@
 import { useState, useEffect } from 'react';
 import { connectSource, testSource, connectDemoSource, uploadFile as uploadFileApi, fetchSampleCreds } from '@/lib/api';
 import type { DataSource } from '@/lib/types';
-import { useOnboarding } from '@/hooks/useOnboarding';
-
 interface AddSourceWizardProps {
   sessionId: string;
   onClose: () => void;
@@ -13,7 +11,6 @@ interface AddSourceWizardProps {
 
 export function AddSourceWizard({ sessionId, onClose, onAdded }: AddSourceWizardProps) {
   const [step, setStep] = useState(1);
-  const { nextStep, currentStep } = useOnboarding();
   const [selectedType, setSelectedType] = useState<string>('');
   const [sqlDialect, setSqlDialect] = useState<string>('postgresql');
   const [config, setConfig] = useState<Record<string, string>>({});
@@ -132,7 +129,7 @@ export function AddSourceWizard({ sessionId, onClose, onAdded }: AddSourceWizard
     setError('');
     try {
       if (selectedType === 'csv' || selectedType === 'excel') {
-        const result = await connectDemoSource(sessionId, 'csv');
+        const result = await connectDemoSource(sessionId, 'excel');
         if (result.error) setError(result.error);
         else { setPreviews([result]); setStep(4); }
       } else {
@@ -249,7 +246,7 @@ export function AddSourceWizard({ sessionId, onClose, onAdded }: AddSourceWizard
                 return (
                   <button
                     key={t.id}
-                    onClick={() => { setSelectedType(t.id); setStep(2); if (currentStep === 2) nextStep(); }}
+                    onClick={() => { setSelectedType(t.id); setStep(2); }}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 14,
                       background: active ? 'rgba(240,180,41,0.08)' : 'rgba(255,255,255,0.03)',

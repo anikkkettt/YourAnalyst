@@ -1,9 +1,6 @@
 ﻿import type { Metadata } from 'next'
 import './globals.css'
 
-import { OnboardingProvider } from '@/hooks/useOnboarding'
-import { OnboardingGuide } from '@/components/OnboardingGuide'
-
 export const metadata: Metadata = {
   title: 'YourAnalyst : Ask anything. Trust everything.',
   description: 'AI-powered analytics: connect your data, ask in plain English, get trustworthy insights.',
@@ -46,10 +43,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           animation: 'orb-float-1 18s ease-in-out infinite reverse',
         }} />
 
-        <OnboardingProvider>
-          {children}
-          <OnboardingGuide />
-        </OnboardingProvider>
+        {children}
       </body>
     </html>
   )

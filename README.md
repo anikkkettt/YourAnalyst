@@ -15,6 +15,15 @@ A self-service analytics platform where you type a question in plain English and
 [![LangGraph](https://img.shields.io/badge/LangGraph-1.1%2B-orange.svg)](https://langchain-ai.github.io/langgraph/)
 [![Groq](https://img.shields.io/badge/LLM-Groq%20%7C%20Llama%203.3%2070B-yellow.svg)](https://console.groq.com)
 [![NatWest Hackathon](https://img.shields.io/badge/NatWest-Code%20for%20Purpose%202025-purple.svg)](https://natwestgroup.com)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-your--analyst--3z2p.vercel.app-brightgreen.svg)](https://your-analyst-3z2p.vercel.app/)
+[![Backend](https://img.shields.io/badge/Backend-youranalyst--8985.onrender.com-blue.svg)](https://youranalyst-8985.onrender.com/)
+
+<br/>
+
+### 🌐 Frontend &nbsp;→&nbsp; [https://your-analyst-3z2p.vercel.app](https://your-analyst-3z2p.vercel.app/)
+### ⚙️ Backend API &nbsp;→&nbsp; [https://youranalyst-8985.onrender.com](https://youranalyst-8985.onrender.com/)
+
+<sub>Enter any username to sign in — no password needed.</sub>
 
 <br/>
 
@@ -419,7 +428,11 @@ TURSO_AUTH_TOKEN=your_token
 ### Frontend (`frontend/.env.local`)
 
 ```env
+# Local development
 NEXT_PUBLIC_API_URL=http://localhost:8000
+
+# Production (deployed on Render)
+# NEXT_PUBLIC_API_URL=https://youranalyst-8985.onrender.com
 ```
 
 ---

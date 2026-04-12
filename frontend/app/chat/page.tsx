@@ -545,7 +545,6 @@ function ChatPageInner() {
                       );
                     })}
                     <button
-                      data-tour="chat-connect"
                       onClick={() => setShowWizard(true)}
                       style={{
                         background: 'none', border: 'none',
@@ -907,7 +906,6 @@ function MessageBubble({ msg, onFollowup, onCopyStatus, allMessages, username }:
       style={{ display: 'flex', gap: 10, marginBottom: '1.5rem', alignItems: 'flex-start' }}
     >
       <div
-        data-tour="chat-insight"
         style={{
           width: 36, height: 36, borderRadius: 12,
           background: 'var(--accent-dim)',

@@ -4,7 +4,6 @@ import { useRouter } from 'next/navigation';
 import { getSources, deleteSource } from '@/lib/api';
 import type { DataSource } from '@/lib/types';
 import { useAuth } from '@/hooks/useAuth';
-import { useOnboarding } from '@/hooks/useOnboarding';
 import { AddSourceWizard } from '@/components/AddSourceWizard';
 
 /* ══════════════════════════════════════════════
@@ -106,7 +105,6 @@ const formatTime = (iso: string) => {
    ══════════════════════════════════════════════ */
 export default function SourcesPage() {
   const { isAuthenticated, username, isLoading, signOut, switchSession } = useAuth();
-  const { nextStep } = useOnboarding();
   const router = useRouter();
 
   // Workplace list state
@@ -572,7 +570,7 @@ export default function SourcesPage() {
                   Connect databases or upload files to this workplace
                 </p>
               </div>
-              <button data-tour="source-add" className="btn-primary mobile-full-width" onClick={() => { setShowWizard(true); nextStep(); }}>
+              <button className="btn-primary mobile-full-width" onClick={() => setShowWizard(true)}>
                 + Add Data Source
               </button>
             </div>
@@ -644,7 +642,7 @@ export default function SourcesPage() {
             {/* CTA */}
             {sources.length > 0 && (
               <div style={{ textAlign: 'center', paddingTop: '0.5rem', marginBottom: '2rem' }}>
-                <button data-tour="source-combined" className="btn-primary mobile-full-width" style={{ fontSize: '1.05rem', padding: '0.875rem 3rem' }} onClick={() => handleStartChat()}>
+                <button className="btn-primary mobile-full-width" style={{ fontSize: '1.05rem', padding: '0.875rem 3rem' }} onClick={() => handleStartChat()}>
                   Start Asking Questions →
                 </button>
               </div>

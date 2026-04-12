@@ -2,15 +2,12 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
-import { useOnboarding } from '@/hooks/useOnboarding';
-
 export default function AuthPage() {
   const [username, setUsername] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [focused, setFocused] = useState(false);
   const { signIn } = useAuth();
-  const { nextStep, currentStep } = useOnboarding();
   const router = useRouter();
 
   async function handleSubmit(e: React.FormEvent) {
@@ -21,7 +18,6 @@ export default function AuthPage() {
     const ok = await signIn(username, 'auto');
     setLoading(false);
     if (ok) {
-      if (currentStep === 0) nextStep();
       router.push('/workplaces');
     } else {
       setError('Sign in failed. Please try again.');
@@ -62,7 +58,6 @@ export default function AuthPage() {
       }}>
         {/* Glass card — everything lives inside */}
         <div
-          data-tour="auth-card"
           style={{
             background: 'rgba(255, 255, 255, 0.045)',
             backdropFilter: 'blur(48px) saturate(1.4)',

@@ -10,7 +10,7 @@ from typing import List
 from fastapi.responses import JSONResponse
 from core.connection_manager import ConnectionManager, DatabaseKind
 from core.source_registry import register_source, lookup_source, enumerate_sources, unregister_source
-import tempfile, os, shutil, pandas as pd, sqlalchemy as sa, json
+import tempfile, os, shutil, glob as _glob, pandas as pd, sqlalchemy as sa, json
 from datetime import datetime
 from core.llm_client import invoke_llm
 
@@ -167,11 +167,18 @@ async def connect_demo(payload: dict):
 
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         sample_dir = os.path.join(os.path.dirname(base_dir), "sample_data")
-        db_path = os.path.join(base_dir, "demo.db")
 
-        if requested_type == "csv":
-            csv_path = os.path.join(sample_dir, "monthly_revenue.csv")
-            source = connector.connect(DatabaseKind.CSV, {"file_path": csv_path}, "Monthly Revenue Data", session_id)
+        def _find_sample_excel():
+            """Return the first .xlsx file in sample_data/, or None."""
+            matches = _glob.glob(os.path.join(sample_dir, "*.xlsx"))
+            return matches[0] if matches else None
+
+        if requested_type in ("csv", "excel"):
+            excel_path = _find_sample_excel()
+            if not excel_path:
+                return JSONResponse(status_code=404, content={"error": "No sample Excel file found in sample_data/"})
+            source = connector.connect(DatabaseKind.EXCEL, {"file_path": excel_path},
+                                       "Sample Sales Dataset", session_id)
         elif requested_type == "postgresql":
             params = {
                 "username": os.environ.get("SUPABASE_USER"),
@@ -190,31 +197,27 @@ async def connect_demo(payload: dict):
                 "database": os.environ.get("TIDB_DATABASE") or "fortune500"
             }
             source = connector.connect(DatabaseKind.MYSQL, params, "TiDB Loan Sample", session_id)
-        elif requested_type == "sqlite" or requested_type == "turso":
+        elif requested_type in ("sqlite", "turso"):
             turso_host = os.environ.get("TURSO_HOST")
             if turso_host:
                 params = {
                     "host": turso_host,
                     "password": os.environ.get("TURSO_AUTH_TOKEN")
                 }
-                source = connector.connect(DatabaseKind.TURSO, params, "Turso Fraud Sample", session_id)
+                source = connector.connect(DatabaseKind.TURSO, params, "Turso Sample", session_id)
             else:
-                engine = sa.create_engine("sqlite:///{}".format(db_path))
-                with engine.connect() as conn:
-                    conn.execute(sa.text("DROP TABLE IF EXISTS employees"))
-                    conn.execute(sa.text("DROP TABLE IF EXISTS sales_data"))
-                    conn.commit()
-
-                files = {"monthly_revenue": os.path.join(sample_dir, "monthly_revenue.csv")}
-                for table_name, file_path in files.items():
-                    if os.path.exists(file_path):
-                        df = pd.read_csv(file_path)
-                        df.columns = [c.strip().replace(" ", "_").lower() for c in df.columns]
-                        df.to_sql(table_name, engine, if_exists="replace", index=False)
-                source = connector.connect(DatabaseKind.SQLITE, {"file_path": db_path}, "Analysis Database", session_id)
+                # Fall back to loading the Excel sample into DuckDB
+                excel_path = _find_sample_excel()
+                if not excel_path:
+                    return JSONResponse(status_code=404, content={"error": "No sample file found in sample_data/"})
+                source = connector.connect(DatabaseKind.EXCEL, {"file_path": excel_path},
+                                           "Sample Sales Dataset", session_id)
         else:
-            engine = sa.create_engine("sqlite:///{}".format(db_path))
-            source = connector.connect(DatabaseKind.SQLITE, {"file_path": db_path}, "Analysis Database", session_id)
+            excel_path = _find_sample_excel()
+            if not excel_path:
+                return JSONResponse(status_code=404, content={"error": "No sample file found in sample_data/"})
+            source = connector.connect(DatabaseKind.EXCEL, {"file_path": excel_path},
+                                       "Sample Sales Dataset", session_id)
 
         register_source(source)
 
