@@ -122,7 +122,7 @@ async def get_sample_creds(db_type: str):
             if not (host and user and pwd):
                 return not_configured
             return {
-                "source_name": "Supabase Bank Sample",
+                "source_name": "Supabase Sales Sample",
                 "host": host,
                 "port": os.environ.get("SUPABASE_PORT", "5432"),
                 "database": os.environ.get("SUPABASE_DATABASE", "postgres"),
@@ -136,23 +136,12 @@ async def get_sample_creds(db_type: str):
             if not (host and user and pwd):
                 return not_configured
             return {
-                "source_name": "TiDB Loan Sample",
+                "source_name": "TiDB Sales Sample",
                 "host": host,
                 "port": os.environ.get("TIDB_PORT", "4000"),
                 "database": os.environ.get("TIDB_DATABASE", "fortune500"),
                 "username": user,
                 "password": pwd
-            }
-        elif db_type == "sqlite" or db_type == "turso":
-            turso_host = os.environ.get("TURSO_HOST")
-            turso_token = os.environ.get("TURSO_AUTH_TOKEN")
-            if not (turso_host and turso_token):
-                return not_configured
-            return {
-                "source_name": "Turso Fraud Sample",
-                "db_type": "turso",
-                "host": turso_host,
-                "password": turso_token
             }
         return JSONResponse(status_code=404, content={"error": "Sample not configured for this type"})
     except Exception as exc:
@@ -187,7 +176,7 @@ async def connect_demo(payload: dict):
                 "port": int(os.environ.get("SUPABASE_PORT", 5432)),
                 "database": os.environ.get("SUPABASE_DATABASE") or "postgres"
             }
-            source = connector.connect(DatabaseKind.POSTGRESQL, params, "Supabase Bank Sample", session_id)
+            source = connector.connect(DatabaseKind.POSTGRESQL, params, "Supabase Sales Sample", session_id)
         elif requested_type == "mysql":
             params = {
                 "username": os.environ.get("TIDB_USER"),
@@ -196,22 +185,13 @@ async def connect_demo(payload: dict):
                 "port": int(os.environ.get("TIDB_PORT", 4000)),
                 "database": os.environ.get("TIDB_DATABASE") or "fortune500"
             }
-            source = connector.connect(DatabaseKind.MYSQL, params, "TiDB Loan Sample", session_id)
+            source = connector.connect(DatabaseKind.MYSQL, params, "TiDB Sales Sample", session_id)
         elif requested_type in ("sqlite", "turso"):
-            turso_host = os.environ.get("TURSO_HOST")
-            if turso_host:
-                params = {
-                    "host": turso_host,
-                    "password": os.environ.get("TURSO_AUTH_TOKEN")
-                }
-                source = connector.connect(DatabaseKind.TURSO, params, "Turso Sample", session_id)
-            else:
-                # Fall back to loading the Excel sample into DuckDB
-                excel_path = _find_sample_excel()
-                if not excel_path:
-                    return JSONResponse(status_code=404, content={"error": "No sample file found in sample_data/"})
-                source = connector.connect(DatabaseKind.EXCEL, {"file_path": excel_path},
-                                           "Sample Sales Dataset", session_id)
+            excel_path = _find_sample_excel()
+            if not excel_path:
+                return JSONResponse(status_code=404, content={"error": "No sample file found in sample_data/"})
+            source = connector.connect(DatabaseKind.EXCEL, {"file_path": excel_path},
+                                       "Sample Sales Dataset", session_id)
         else:
             excel_path = _find_sample_excel()
             if not excel_path:

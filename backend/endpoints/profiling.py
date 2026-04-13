@@ -3,11 +3,17 @@ Data Profiling Endpoints — EDA statistics, data quality, and anomaly detection
 
 Computes per-column aggregate statistics, data quality metrics, and
 IQR-based outlier counts for any connected data source.
+
+For DuckDB sources (CSV/Excel): runs SQL stats queries directly against DuckDB.
+For SQL sources (PostgreSQL, MySQL): fetches each table into a pandas DataFrame
+first, then profiles using pandas — no dialect-specific SQL needed.
 """
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from core.source_registry import lookup_source
 from core.connection_manager import ConnectionManager, DatabaseKind
+import pandas as pd
+import sqlalchemy as sa
 import logging
 
 router = APIRouter()
@@ -89,10 +95,119 @@ def _dialect_for(source) -> str:
         return "postgresql"
     if source.db_type == DatabaseKind.MYSQL:
         return "mysql"
-    if source.db_type in (DatabaseKind.SQLITE, DatabaseKind.TURSO):
+    if source.db_type == DatabaseKind.SQLITE:
         return "sqlite"
     return "duckdb"
 
+
+# ── SQL table → pandas DataFrame ─────────────────────────────────────────────
+
+def _fetch_sql_table(source, tname: str) -> pd.DataFrame | None:
+    """Fetch an entire SQL table into a pandas DataFrame."""
+    try:
+        with source.engine.connect() as conn:
+            if str(source.engine.url).startswith("mysql"):
+                conn.execute(sa.text(
+                    "SET SESSION sql_mode=(SELECT CONCAT(@@sql_mode, ',ANSI_QUOTES'))"
+                ))
+            result = conn.execute(sa.text('SELECT * FROM "{}"'.format(tname)))
+            cols = list(result.keys())
+            rows = result.fetchall()
+        return pd.DataFrame(rows, columns=cols)
+    except Exception as exc:
+        log.warning("Failed to fetch table '%s': %s", tname, exc)
+        return None
+
+
+def _profile_dataframe(df: pd.DataFrame, columns_meta: list, tname: str) -> dict:
+    """Profile a pandas DataFrame — works for both SQL and file sources."""
+    total_rows = len(df)
+    col_profiles = {}
+    null_totals = 0
+    high_null_cols = []
+    anomalies = []
+
+    for col_meta in columns_meta:
+        cn = col_meta["name"]
+        if cn not in df.columns:
+            continue
+
+        kind = _classify(col_meta.get("type", ""))
+        series = df[cn]
+
+        nulls = int(series.isna().sum())
+        distinct = int(series.nunique(dropna=True))
+        null_pct = round(100 * nulls / total_rows, 1) if total_rows > 0 else 0
+        null_totals += nulls
+
+        profile: dict = {
+            "type": col_meta.get("type", "unknown"),
+            "kind": kind,
+            "total": total_rows,
+            "distinct": distinct,
+            "nulls": nulls,
+            "null_pct": null_pct,
+        }
+
+        if kind == "numeric":
+            numeric = pd.to_numeric(series, errors="coerce").dropna()
+            if not numeric.empty:
+                profile["min"] = float(numeric.min())
+                profile["max"] = float(numeric.max())
+                profile["mean"] = round(float(numeric.mean()), 2)
+
+                # IQR outlier detection
+                q1 = float(numeric.quantile(0.25))
+                q3 = float(numeric.quantile(0.75))
+                iqr = q3 - q1
+                lower = q1 - 1.5 * iqr
+                upper = q3 + 1.5 * iqr
+                outlier_count = int(((numeric < lower) | (numeric > upper)).sum())
+                if outlier_count > 0:
+                    anomalies.append({
+                        "column": cn,
+                        "outlier_count": outlier_count,
+                        "q1": round(q1, 2),
+                        "q3": round(q3, 2),
+                        "iqr": round(iqr, 2),
+                        "lower_bound": round(lower, 2),
+                        "upper_bound": round(upper, 2),
+                    })
+            else:
+                profile["min"] = None
+                profile["max"] = None
+                profile["mean"] = 0.0
+
+        elif kind == "text":
+            non_null = series.dropna().astype(str)
+            profile["max_length"] = int(non_null.str.len().max()) if not non_null.empty else 0
+
+        elif kind == "date":
+            non_null = series.dropna()
+            profile["min"] = str(non_null.min()) if not non_null.empty else None
+            profile["max"] = str(non_null.max()) if not non_null.empty else None
+
+        if null_pct > 50:
+            high_null_cols.append(cn)
+
+        col_profiles[cn] = profile
+
+    total_cells = total_rows * len(columns_meta) if total_rows > 0 else 1
+    completeness = round(100 * (1 - null_totals / total_cells), 1)
+
+    return {
+        "row_count": total_rows,
+        "columns": col_profiles,
+        "quality": {
+            "completeness_pct": completeness,
+            "high_null_columns": high_null_cols,
+            "has_duplicates": False,
+        },
+        "anomalies": anomalies,
+    }
+
+
+# ── Endpoint ──────────────────────────────────────────────────────────────────
 
 @router.post("/api/sources/{source_id}/profile")
 async def profile_source(source_id: str):
@@ -101,16 +216,33 @@ async def profile_source(source_id: str):
     except KeyError:
         return JSONResponse(status_code=404, content={"error": "Source not found"})
 
-    dialect = _dialect_for(source)
     schema = source.schema or {}
     tables = schema.get("tables", {})
     result_tables = {}
+    is_sql = source.duckdb_conn is None
 
     for tname, tinfo in tables.items():
         columns = tinfo.get("columns", [])
         if not columns:
             continue
 
+        # ── SQL sources: fetch into DataFrame, profile with pandas ───────────
+        if is_sql:
+            df = _fetch_sql_table(source, tname)
+            if df is None:
+                result_tables[tname] = {
+                    "row_count": tinfo.get("row_count", -1),
+                    "columns": {},
+                    "quality": {"completeness_pct": 0, "high_null_columns": [], "has_duplicates": False},
+                    "anomalies": [],
+                    "error": "Failed to fetch table data",
+                }
+                continue
+            result_tables[tname] = _profile_dataframe(df, columns, tname)
+            continue
+
+        # ── DuckDB sources (CSV/Excel): SQL stats queries ─────────────────────
+        dialect = _dialect_for(source)
         stats_sql = _build_stats_sql(tname, columns, dialect)
         stats_result = connector.execute_on_source(source, stats_sql)
 

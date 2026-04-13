@@ -2,9 +2,9 @@
 Connection Manager — Multi-dialect database connectivity layer.
 
 Handles establishment and introspection of connections across PostgreSQL,
-MySQL, SQLite, Turso/libSQL, CSV and Excel sources. Performs credential
-masking, schema discovery, and DuckDB registration for flat-file inputs.
-SQLAlchemy powers relational engines; libsql_client handles Turso.
+MySQL, CSV and Excel sources. Performs credential masking, schema discovery,
+and DuckDB registration for flat-file inputs.
+SQLAlchemy powers relational engines; DuckDB handles flat files.
 """
 from dataclasses import dataclass, field
 from enum import Enum
@@ -13,14 +13,12 @@ from sqlalchemy import inspect as sa_inspect
 import pandas as pd
 import duckdb, uuid, re
 from datetime import datetime
-import libsql_client
 
 
 class DatabaseKind(Enum):
     POSTGRESQL = "postgresql"
     MYSQL = "mysql"
     SQLITE = "sqlite"
-    TURSO = "turso"
     CSV = "csv"
     EXCEL = "excel"
 
@@ -41,7 +39,6 @@ class LiveSource:
     table_count: int
     session_id: str
     config: dict
-    turso_client: any = None
 
 
 class ConnectionManager:
@@ -63,21 +60,6 @@ class ConnectionManager:
             return f"sqlite:///{params['file_path']}"
         return ""
 
-    def _build_turso_url(self, params: dict) -> str:
-        """Construct the libsql:// endpoint from raw host configuration."""
-        host = params.get('host', '')
-        clean_host = host.replace('libsql://', '').replace('https://', '')
-        return "libsql://{}".format(clean_host)
-
-    def _create_turso_client(self, params: dict):
-        """Instantiate a synchronous libsql handle for Turso databases."""
-        url = self._build_turso_url(params)
-        token = params.get('password') or params.get('token', '')
-        return libsql_client.create_client_sync(
-            url=url,
-            auth_token=token
-        )
-
     def test_connection(self, db_type: DatabaseKind, params: dict) -> dict:
         """Verify connectivity and return table metadata without persisting state."""
         try:
@@ -89,15 +71,6 @@ class ConnectionManager:
                 xl = pd.ExcelFile(params["file_path"])
                 sheets = xl.sheet_names
                 return {"success": True, "error": None, "table_count": len(sheets), "tables": sheets}
-
-            if db_type == DatabaseKind.TURSO:
-                client = self._create_turso_client(params)
-                try:
-                    rs = client.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-                    tables = [row[0] for row in rs.rows]
-                    return {"success": True, "error": None, "table_count": len(tables), "tables": tables}
-                finally:
-                    client.close()
 
             conn_str = self._build_conn_str(db_type, params)
 
@@ -147,15 +120,6 @@ class ConnectionManager:
             return LiveSource(source_id, name, safe_name, db_type, "excel://{}".format(name),
                               None, conn, first_df, schema, True,
                               datetime.utcnow().isoformat(), len(schema["tables"]), session_id, params)
-
-        elif db_type == DatabaseKind.TURSO:
-            client = self._create_turso_client(params)
-            masked = "turso://{}".format(params.get('host', '****'))
-            schema = self._schema_from_turso(client, selected_tables)
-            return LiveSource(source_id, name, safe_name, db_type, masked,
-                              None, None, None, schema, True,
-                              datetime.utcnow().isoformat(), len(schema["tables"]),
-                              session_id, params, turso_client=client)
 
         else:
             conn_str = self._build_conn_str(db_type, params)
@@ -219,32 +183,6 @@ class ConnectionManager:
             tables[tname] = {"row_count": count, "columns": cols}
         return {"tables": tables}
 
-    def _schema_from_turso(self, client, selected_tables: list = None) -> dict:
-        """Pull schema information from a Turso database via PRAGMA introspection."""
-        tables = {}
-        rs = client.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-        all_tables = [row[0] for row in rs.rows]
-        target_tables = [t for t in all_tables if t in selected_tables] if selected_tables else all_tables
-
-        for tname in target_tables:
-            col_rs = client.execute(f"PRAGMA table_info('{tname}')")
-            cols = []
-            for row in col_rs.rows:
-                cols.append({
-                    "name": row[1],
-                    "type": row[2] or "TEXT",
-                    "pk": bool(row[5]),
-                    "fk": None,
-                    "nullable": not bool(row[3])
-                })
-            try:
-                count_rs = client.execute(f'SELECT COUNT(*) FROM "{tname}"')
-                count = count_rs.rows[0][0] if count_rs.rows else -1
-            except Exception:
-                count = -1
-            tables[tname] = {"row_count": count, "columns": cols}
-        return {"tables": tables}
-
     def execute_on_source(self, source: LiveSource, sql: str) -> dict:
         """Run arbitrary SQL against a connected source and return columnar output."""
         try:
@@ -258,14 +196,6 @@ class ConnectionManager:
                     total = len(rows)
                 return {"columns": cols, "rows": [list(r) for r in rows],
                         "row_count": total, "truncated": total > 500, "error": None}
-            elif source.turso_client:
-                rs = source.turso_client.execute(sql)
-                cols = [col.name for col in rs.columns] if rs.columns else []
-                all_rows = [list(row) for row in rs.rows]
-                truncated = len(all_rows) > 500
-                rows = all_rows[:500]
-                return {"columns": cols, "rows": rows,
-                        "row_count": len(all_rows), "truncated": truncated, "error": None}
             else:
                 with source.engine.connect() as conn:
                     if str(source.engine.url).startswith("mysql"):

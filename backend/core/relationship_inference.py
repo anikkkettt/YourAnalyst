@@ -9,8 +9,9 @@ weighted signals adapted from the TrustLens AI inference pipeline:
     cardinality_signal 20%  — uniqueness ratio hints at FK/PK relationship
     id_pattern_match   10%  — heuristic for _id / _key suffix naming
 
-Works across all source types: DuckDB (CSV/Excel), SQLAlchemy
-(PostgreSQL, MySQL, SQLite), and Turso/libSQL.
+For SQL sources (PostgreSQL, MySQL): relationships are read directly from the
+FK/PK metadata collected at connection time — no extra DB queries needed.
+For DuckDB sources (CSV/Excel): statistical inference is used.
 """
 
 import itertools
@@ -114,28 +115,147 @@ def _build_reason(col_a: str, col_b: str, breakdown: Dict, rel_type: str) -> str
     return "Candidate join based on column name and value analysis."
 
 
-# ── Data access helpers (multi-dialect) ──────────────────────────────────────
+# ── SQL: relationships from FK/PK schema metadata ────────────────────────────
+
+def _relationships_from_schema(source) -> List[Dict[str, Any]]:
+    """
+    Extract relationships directly from the FK metadata stored in the schema.
+    SQLAlchemy collects this at connect time via inspector.get_foreign_keys().
+    No additional DB queries are needed.
+    """
+    schema = source.schema
+    tables = schema.get("tables", {})
+    results = []
+
+    for tname, tinfo in tables.items():
+        for col in tinfo.get("columns", []):
+            fk = col.get("fk")
+            if not fk:
+                continue
+            # fk format: "referred_table.referred_column"
+            parts = fk.split(".", 1)
+            if len(parts) != 2:
+                continue
+            referred_table, referred_col = parts
+
+            # Infer relationship type from PK/FK roles
+            left_is_pk = col.get("pk", False)
+            ref_cols = tables.get(referred_table, {}).get("columns", [])
+            right_is_pk = any(c.get("pk") and c["name"] == referred_col for c in ref_cols)
+
+            if left_is_pk and right_is_pk:
+                rel_type = "one_to_one"
+            elif right_is_pk:
+                rel_type = "many_to_one"
+            elif left_is_pk:
+                rel_type = "one_to_many"
+            else:
+                rel_type = "many_to_many"
+
+            results.append({
+                "left_table": tname,
+                "right_table": referred_table,
+                "left_column": col["name"],
+                "right_column": referred_col,
+                "relationship_type": rel_type,
+                "confidence_score": 1.0,
+                "confidence_breakdown": {
+                    "name_similarity": 1.0,
+                    "value_overlap": 1.0,
+                    "cardinality_signal": 1.0,
+                    "id_pattern_match": 1.0,
+                },
+                "reason": "Explicit foreign key constraint: {}.{} → {}.{}".format(
+                    tname, col["name"], referred_table, referred_col
+                ),
+            })
+
+    # If no FK constraints found, fall back to name-similarity inference
+    # using just the schema column names (no DB queries)
+    if not results:
+        results = _infer_from_column_names(tables)
+
+    logger.info(
+        "Schema-based relationship inference for source '%s': %d relationships found",
+        source.name, len(results),
+    )
+    return results
+
+
+def _infer_from_column_names(tables: dict) -> List[Dict[str, Any]]:
+    """
+    Fallback: infer likely joins purely from column name similarity.
+    Used when no FK constraints exist. No DB queries.
+    """
+    table_names = list(tables.keys())
+    results: List[Dict[str, Any]] = []
+    pair_best: Dict[Tuple[str, str], Dict] = {}
+
+    for tbl_a, tbl_b in itertools.combinations(table_names, 2):
+        cols_a = [c for c in tables[tbl_a].get("columns", [])]
+        cols_b = [c for c in tables[tbl_b].get("columns", [])]
+
+        for col_a_meta, col_b_meta in itertools.product(cols_a, cols_b):
+            col_a = col_a_meta["name"]
+            col_b = col_b_meta["name"]
+
+            name_sim = _name_similarity(col_a, col_b)
+            id_pat = _id_pattern_score(col_a, col_b)
+
+            if name_sim < 0.5 and id_pat < 0.5:
+                continue
+
+            confidence = W_NAME * name_sim + W_ID_PATTERN * id_pat + W_CARDINALITY * 0.5
+
+            if confidence < MIN_CONFIDENCE:
+                continue
+
+            left_is_pk = col_a_meta.get("pk", False)
+            right_is_pk = col_b_meta.get("pk", False)
+            if left_is_pk and right_is_pk:
+                rel_type = "one_to_one"
+            elif right_is_pk:
+                rel_type = "many_to_one"
+            elif left_is_pk:
+                rel_type = "one_to_many"
+            else:
+                rel_type = "many_to_many"
+
+            breakdown = {
+                "name_similarity": round(name_sim, 3),
+                "value_overlap": 0.0,
+                "cardinality_signal": 0.5,
+                "id_pattern_match": round(id_pat, 3),
+            }
+            reason = _build_reason(col_a, col_b, breakdown, rel_type)
+
+            rel = {
+                "left_table": tbl_a,
+                "right_table": tbl_b,
+                "left_column": col_a,
+                "right_column": col_b,
+                "relationship_type": rel_type,
+                "confidence_score": round(confidence, 3),
+                "confidence_breakdown": breakdown,
+                "reason": reason,
+            }
+
+            key = (tbl_a, col_a, tbl_b, col_b)
+            if key not in pair_best or pair_best[key]["confidence_score"] < confidence:
+                pair_best[key] = rel
+
+    results.extend(pair_best.values())
+    results.sort(key=lambda r: r["confidence_score"], reverse=True)
+    return results
+
+
+# ── DuckDB: data access helpers ──────────────────────────────────────────────
 
 def _column_stats_duckdb(conn, table: str, col: str) -> Dict:
     qt = table.replace('"', '""')
     qc = col.replace('"', '""')
     total = conn.execute('SELECT COUNT(*) FROM "{}"'.format(qt)).fetchone()[0]
     distinct = conn.execute('SELECT COUNT(DISTINCT "{}") FROM "{}"'.format(qc, qt)).fetchone()[0]
-    return {"total_rows": total, "distinct_count": distinct}
-
-
-def _column_stats_sqla(engine, table: str, col: str) -> Dict:
-    with engine.connect() as c:
-        if str(engine.url).startswith("mysql"):
-            c.execute(sa.text("SET SESSION sql_mode=(SELECT CONCAT(@@sql_mode, ',ANSI_QUOTES'))"))
-        total = c.execute(sa.text('SELECT COUNT(*) FROM "{}"'.format(table))).scalar()
-        distinct = c.execute(sa.text('SELECT COUNT(DISTINCT "{}") FROM "{}"'.format(col, table))).scalar()
-    return {"total_rows": total, "distinct_count": distinct}
-
-
-def _column_stats_turso(client, table: str, col: str) -> Dict:
-    total = client.execute('SELECT COUNT(*) FROM "{}"'.format(table)).rows[0][0]
-    distinct = client.execute('SELECT COUNT(DISTINCT "{}") FROM "{}"'.format(col, table)).rows[0][0]
     return {"total_rows": total, "distinct_count": distinct}
 
 
@@ -146,23 +266,6 @@ def _sample_values_duckdb(conn, table: str, col: str, n: int = VALUE_SAMPLE_SIZE
         'SELECT DISTINCT CAST("{}" AS VARCHAR) FROM "{}" WHERE "{}" IS NOT NULL LIMIT {}'.format(qc, qt, qc, n)
     ).fetchall()
     return {r[0] for r in rows}
-
-
-def _sample_values_sqla(engine, table: str, col: str, n: int = VALUE_SAMPLE_SIZE) -> set:
-    with engine.connect() as c:
-        if str(engine.url).startswith("mysql"):
-            c.execute(sa.text("SET SESSION sql_mode=(SELECT CONCAT(@@sql_mode, ',ANSI_QUOTES'))"))
-        rows = c.execute(sa.text(
-            'SELECT DISTINCT CAST("{}" AS CHAR) FROM "{}" WHERE "{}" IS NOT NULL LIMIT {}'.format(col, table, col, n)
-        )).fetchall()
-    return {str(r[0]) for r in rows}
-
-
-def _sample_values_turso(client, table: str, col: str, n: int = VALUE_SAMPLE_SIZE) -> set:
-    rs = client.execute(
-        'SELECT DISTINCT CAST("{}" AS TEXT) FROM "{}" WHERE "{}" IS NOT NULL LIMIT {}'.format(col, table, col, n)
-    )
-    return {str(r[0]) for r in rs.rows}
 
 
 def _jaccard(set_a: set, set_b: set) -> float:
@@ -179,8 +282,16 @@ def infer_relationships(source) -> List[Dict[str, Any]]:
     """
     Infer relationships between all table pairs within a single LiveSource.
 
-    Returns a list of relationship dicts sorted by confidence descending.
+    SQL sources: reads FK/PK metadata directly from schema — no extra queries.
+    DuckDB sources (CSV/Excel): uses statistical inference over sampled values.
     """
+    is_duckdb = source.duckdb_conn is not None
+
+    # SQL sources — use schema FK/PK metadata
+    if not is_duckdb:
+        return _relationships_from_schema(source)
+
+    # DuckDB sources — statistical inference
     schema = source.schema
     tables = schema.get("tables", {})
     table_names = list(tables.keys())
@@ -188,28 +299,15 @@ def infer_relationships(source) -> List[Dict[str, Any]]:
     if len(table_names) < 2:
         return []
 
-    is_duckdb = source.duckdb_conn is not None
-    is_turso = source.turso_client is not None
-
     def get_stats(table: str, col: str) -> Dict:
         try:
-            if is_duckdb:
-                return _column_stats_duckdb(source.duckdb_conn, table, col)
-            elif is_turso:
-                return _column_stats_turso(source.turso_client, table, col)
-            else:
-                return _column_stats_sqla(source.engine, table, col)
+            return _column_stats_duckdb(source.duckdb_conn, table, col)
         except Exception:
             return {"total_rows": 0, "distinct_count": 0}
 
     def get_samples(table: str, col: str) -> set:
         try:
-            if is_duckdb:
-                return _sample_values_duckdb(source.duckdb_conn, table, col)
-            elif is_turso:
-                return _sample_values_turso(source.turso_client, table, col)
-            else:
-                return _sample_values_sqla(source.engine, table, col)
+            return _sample_values_duckdb(source.duckdb_conn, table, col)
         except Exception:
             return set()
 

@@ -2,10 +2,20 @@
 import pandas as pd
 import sqlalchemy as sa
 import os
+import glob
+
+SHEETS = ["Products", "Customers", "SalesTransactions"]
+
+
+def _find_sample_excel(sample_data_dir):
+    matches = glob.glob(os.path.join(sample_data_dir, "*.xlsx"))
+    if not matches:
+        raise FileNotFoundError("No .xlsx file found in {}".format(sample_data_dir))
+    return matches[0]
 
 
 def populate_remote_mysql():
-    """Push sample CSV data into the configured Aiven MySQL database."""
+    """Push all 3 Excel sheets into the configured Aiven MySQL database."""
     user = os.environ["MYSQL_USER"]
     password = os.environ["MYSQL_PASSWORD"]
     host = os.environ["MYSQL_HOST"]
@@ -14,6 +24,9 @@ def populate_remote_mysql():
 
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sample_data_dir = os.path.join(root_dir, "..", "sample_data")
+
+    excel_path = _find_sample_excel(sample_data_dir)
+    print("Using sample file: {}".format(os.path.basename(excel_path)))
 
     conn_str = "mysql+pymysql://{}:{}@{}:{}/{}".format(
         user, password, host, port, database
@@ -26,19 +39,13 @@ def populate_remote_mysql():
             connect_args={"ssl": {"verify_identity": True}}
         )
 
-        datasets = {
-            "employees": os.path.join(sample_data_dir, "employees.csv"),
-            "sales_data": os.path.join(sample_data_dir, "sales_data.csv")
-        }
-
-        for table_name, file_path in datasets.items():
-            if os.path.exists(file_path):
-                print("  Uploading {}...".format(table_name))
-                df = pd.read_csv(file_path)
-                df.columns = [c.strip().replace(' ', '_').lower() for c in df.columns]
-                df.to_sql(table_name, engine, if_exists="replace", index=False)
-            else:
-                print("  Warning: {} not found.".format(file_path))
+        for sheet in SHEETS:
+            table_name = sheet.lower()
+            print("  Uploading sheet '{}' → table '{}'...".format(sheet, table_name))
+            df = pd.read_excel(excel_path, sheet_name=sheet)
+            df.columns = [c.strip().replace(" ", "_").lower() for c in df.columns]
+            df.to_sql(table_name, engine, if_exists="replace", index=False)
+            print("    {} rows inserted.".format(len(df)))
 
         print("Remote MySQL population complete!")
 

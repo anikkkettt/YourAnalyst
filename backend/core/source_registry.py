@@ -34,7 +34,6 @@ def duplicate_sources(from_session_id: str, to_session_id: str):
     File-backed sources (CSV/Excel) get a fresh DuckDB handle with the
     DataFrame re-registered, since DuckDB connections are not thread-safe.
     SQL-engine sources share the existing SQLAlchemy pool directly.
-    Turso sources spin up a new libsql_client from stored credentials.
     """
     existing = enumerate_sources(from_session_id)
 
@@ -46,16 +45,6 @@ def duplicate_sources(from_session_id: str, to_session_id: str):
             fresh_conn.register(s.safe_name, s.dataframe)
             cloned = replace(s, source_id=fresh_id, session_id=to_session_id,
                              duckdb_conn=fresh_conn)
-        elif s.turso_client is not None:
-            import libsql_client
-            params = s.config
-            raw_host = params.get("host", "")
-            clean_host = raw_host.replace("libsql://", "").replace("https://", "")
-            url = "libsql://{}".format(clean_host)
-            token = params.get("password") or params.get("token", "")
-            fresh_client = libsql_client.create_client_sync(url=url, auth_token=token)
-            cloned = replace(s, source_id=fresh_id, session_id=to_session_id,
-                             turso_client=fresh_client)
         else:
             cloned = replace(s, source_id=fresh_id, session_id=to_session_id)
 

@@ -35,7 +35,6 @@ export function AddSourceWizard({ sessionId, onClose, onAdded }: AddSourceWizard
   const SQL_DIALECTS = [
     { id: 'postgresql', label: 'PostgreSQL', port: '5432' },
     { id: 'mysql', label: 'MySQL', port: '3306' },
-    { id: 'sqlite', label: 'SQLite', port: '' },
   ];
 
   const resolvedDbType = selectedType === 'sql' ? sqlDialect : selectedType;
@@ -137,21 +136,37 @@ export function AddSourceWizard({ sessionId, onClose, onAdded }: AddSourceWizard
         if (data.error) {
           setError(data.error);
         } else {
-          if (data.source_name) setSourceName(data.source_name);
-          if (data.db_type) {
-            setEffectiveDbType(data.db_type);
+          const dbType = data.db_type || resolvedDbType;
+          const creds: Record<string, any> = {};
+          if (data.host) creds.host = data.host;
+          if (data.port) creds.port = data.port.toString();
+          if (data.database) creds.database = data.database;
+          if (data.username) creds.username = data.username;
+          if (data.password) creds.password = data.password;
+          const name = data.source_name || creds.database || 'sample';
+
+          // Update form state so the fields show the filled values
+          setSourceName(name);
+          setConfig(prev => ({ ...prev, ...creds }));
+          if (data.db_type) setEffectiveDbType(data.db_type);
+
+          // Auto-connect using the fetched credentials directly (no state race)
+          const testResult = await testSource(dbType, creds);
+          if (!testResult.success) {
+            setError(testResult.error || 'Connection failed');
+          } else if (testResult.tables && testResult.tables.length > 0) {
+            setAvailableTables(testResult.tables);
+            setSelectedTables(testResult.tables);
+            setStep(3);
+          } else {
+            const connectResult = await connectSource(dbType, creds, name, sessionId);
+            if (connectResult.error) setError(connectResult.error);
+            else { setPreviews([connectResult]); setStep(4); }
           }
-          const newConfig = { ...config };
-          if (data.host) newConfig.host = data.host;
-          if (data.port) newConfig.port = data.port.toString();
-          if (data.database) newConfig.database = data.database;
-          if (data.username) newConfig.username = data.username;
-          if (data.password) newConfig.password = data.password;
-          setConfig(newConfig);
         }
       }
     } catch {
-      setError('Failed to retrieve sample credentials');
+      setError('Failed to load sample data');
     }
     setConnectingDemo(false);
   };
@@ -239,7 +254,7 @@ export function AddSourceWizard({ sessionId, onClose, onAdded }: AddSourceWizard
               {SOURCE_TYPES.map(t => {
                 const active = selectedType === t.id;
                 const descriptions: Record<string, string> = {
-                  sql: 'PostgreSQL, MySQL, or SQLite',
+                  sql: 'PostgreSQL or MySQL',
                   csv: 'Comma-separated value files',
                   excel: 'Excel spreadsheets (.xlsx, .xls)',
                 };

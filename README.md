@@ -51,7 +51,7 @@ A self-service analytics platform where you type a question in plain English and
 
 Getting answers from databases today is slow. You either write SQL yourself, wait for an analyst, or trust a dashboard that may not answer the exact question you have. **YourAnalyst** changes that.
 
-Connect any database — PostgreSQL, MySQL, SQLite, or upload a CSV — and start asking questions in everyday language. Behind the scenes, a pipeline of 10 specialised AI agents collaborates to understand your intent, write the correct SQL, execute it, validate the result, and deliver a clear business narrative with a chart and a 0–100% confidence score.
+Connect any database — PostgreSQL or MySQL — or upload a CSV/Excel file — and start asking questions in everyday language. Behind the scenes, a pipeline of 10 specialised AI agents collaborates to understand your intent, write the correct SQL, execute it, validate the result, and deliver a clear business narrative with a chart and a 0–100% confidence score.
 
 Every answer comes with a **Trust Trace**: a step-by-step audit trail showing which sources were queried, what assumptions were made, how the SQL was generated, and whether the result passed structural and semantic verification. Nothing is a black box.
 
@@ -78,7 +78,7 @@ Every answer comes with a **Trust Trace**: a step-by-step audit trail showing wh
 | Feature | What it does |
 |---|---|
 | **Workplaces** | Organise data sources into named workplaces, each with its own connections and isolated chat context. |
-| **Multi-Source Querying** | Connect PostgreSQL, MySQL, SQLite, or upload CSV/Excel files — ask questions that span across all connected sources in a single conversation. Excel workbooks load every sheet as a separate table. |
+| **Multi-Source Querying** | Connect PostgreSQL, MySQL, or upload CSV/Excel files — ask questions that span across all connected sources in a single conversation. Excel workbooks load every sheet as a separate table. |
 | **Conversation History** | Past chats are grouped by workplace — revisit any previous analysis with the full thread intact. |
 | **Guided Onboarding** | First-time users see a step-by-step tour of workplaces, source connections, the chat bar, and all analytics panels. |
 
@@ -159,7 +159,7 @@ Every user question passes through a **10-node LangGraph DAG**. Each node does o
 |---|---|---|
 | **1. Intent Parser** | `pipeline/intent_parser.py` | Resolves the user's intent, selects relevant sources, maps business terms to SQL expressions via the Metric Dictionary, and flags assumptions as SAFE / RISKY / UNKNOWN. |
 | **2. Assumption Checker** | `pipeline/assumption_checker.py` | Audits each assumption with a risk rating (LOW / MEDIUM / HIGH) and mitigation strategy. Feeds deductions into the Trust Scorer. |
-| **3. SQL Generator** | `pipeline/sql_generator.py` | Writes dialect-aware SQL (PostgreSQL, MySQL, SQLite, DuckDB) using the resolved intent and full schema context. Powered by Llama 3.3 70B. |
+| **3. SQL Generator** | `pipeline/sql_generator.py` | Writes dialect-aware SQL (PostgreSQL, MySQL, DuckDB) using the resolved intent and full schema context. Powered by Llama 3.3 70B. |
 | **4. Executor** | `pipeline/workflow.py` | Runs the SQL against the connected database via SQLAlchemy or DuckDB. Returns columns, rows, and row count (capped at 500). |
 | **5. Self-Corrector** | `pipeline/sql_generator.py` | On execution error or semantic failure, injects the error message + schema into the prompt and rewrites the SQL. Up to 2 retries. |
 | **6. Result Validator** | `pipeline/result_validator.py` | Two-layer check: structural (non-empty, no nulls, no error) then semantic (LLM verifies the result actually answers the question). Failures route back to node 5. |
@@ -180,10 +180,9 @@ Every user question passes through a **10-node LangGraph DAG**. Each node does o
 | LangGraph | 1.1+ | DAG orchestration of the 10-node agent pipeline |
 | LangChain Core | 1.2+ | Shared abstractions used by LangGraph nodes |
 | Groq SDK | 0.9+ | LLM inference — calls Llama 3.3 70B (SQL, narration) and Llama 3.1 8B (scoring, follow-ups) |
-| SQLAlchemy | 2.0+ | Database connections and query execution for PostgreSQL, MySQL, SQLite |
+| SQLAlchemy | 2.0+ | Database connections and query execution for PostgreSQL and MySQL |
 | psycopg2 | 2.9+ | PostgreSQL adapter |
 | PyMySQL | 1.1+ | MySQL adapter |
-| libsql-client | latest | Turso / LibSQL adapter |
 | DuckDB | 0.10+ | In-memory analytics engine for CSV and Excel files |
 | pandas | 2.2+ | Data manipulation for file uploads and profiling |
 | openpyxl | 3.1+ | Excel (.xlsx) file parsing |
@@ -421,8 +420,6 @@ TIDB_USER=your_user
 TIDB_PASSWORD=your_password
 TIDB_DATABASE=your_database
 
-TURSO_HOST=your-db.turso.io
-TURSO_AUTH_TOKEN=your_token
 ```
 
 ### Frontend (`frontend/.env.local`)
@@ -444,9 +441,8 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 1. Sign in with any username on the `/auth` page.
 2. Create a new **Workplace** — a workspace that groups related data sources together.
 3. Click **Add Data Source** and choose one of:
-   - **SQL Database** — enter host, port, user, password, and database name (PostgreSQL, MySQL, or SQLite).
+   - **SQL Database** — enter host, port, user, password, and database name (PostgreSQL or MySQL).
    - **CSV / Excel** — drag-and-drop or browse for a file. The file is loaded into an in-memory DuckDB instance. **Excel files** expose every worksheet as its own table (sanitized sheet names).
-   - **Turso** — provide the LibSQL URL and auth token.
 4. Once connected, the schema panel auto-populates with tables and columns.
 
 ### Asking Questions
