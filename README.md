@@ -43,6 +43,7 @@ A self-service analytics platform where you type a question in plain English and
 
 - [Platform Demo](#-platform-demo)
 - [Overview](#-overview)
+- [How to Use](#-how-to-use)
 - [Key Features](#-key-features)
 - [Architecture](#-architecture)
 - [LangGraph Pipeline](#-langgraph-pipeline)
@@ -77,6 +78,84 @@ Every answer comes with a **Trust Trace**: a step-by-step audit trail showing wh
 "Show me the loan portfolio breakdown by status"
 "Which customer accounts have the highest balance?"
 ```
+
+---
+
+## 🚀 How to Use
+
+No technical knowledge required. Here is a complete walkthrough from sign-in to insight.
+
+---
+
+### 1 — Sign In
+
+Open the app and enter **any name** as your username. No password, no account creation. You are in.
+
+---
+
+### 2 — Create a Workspace
+
+You land on the **Workplaces** page. Click **Create Workplace**, give it a name (e.g. "Sales Analysis" or "Q2 Review"), and open it. Workplaces keep your sources and conversations organised — you can have as many as you like.
+
+---
+
+### 3 — Connect Your Data
+
+Click **Add Data Source**. You have three options:
+
+| Option | When to use |
+|--------|-------------|
+| **SQL Database** | Connect to an existing PostgreSQL or MySQL database using host, port, and credentials |
+| **CSV / Excel File** | Upload a `.csv` or `.xlsx` file directly from your computer |
+| **Sample Data** | No data? Hit **Try with Sample** to load a pre-built sales dataset instantly — great for exploring the platform |
+
+Once connected, you will see all available tables. **Select the ones you want to work with** and click **Connect**. The app imports only the tables you choose.
+
+---
+
+### 4 — Start Querying
+
+Click **Done — Start Querying**. You are now in the **Chat** window. Type any question in plain English:
+
+> *"What were the top 5 products by revenue last quarter?"*  
+> *"Compare customer spend across regions"*  
+> *"Which transactions are unusually large?"*
+
+Hit **Enter** and the AI pipeline gets to work.
+
+---
+
+### 5 — Read Your Answer
+
+Every response includes:
+
+- **📝 Narrative** — a plain-English summary of the finding
+- **📊 Chart** — an automatically chosen visualisation (bar, line, pie, scatter) for the data
+- **📋 Table** — the raw result rows so you can inspect the numbers directly
+- **🔍 SQL + Explanation** — the exact query that was run, with a plain-English breakdown of what it does and why
+- **🔬 Analysis Breakdown** — an expandable Trust Trace showing every step the AI took: intent detection, SQL generation, validation, confidence scoring, and narrative writing. Nothing is hidden.
+- **📌 Pin** — click the pin icon on any response to save it to your personal dashboard for your favourite responses
+
+---
+
+### 6 — Explore the tabs
+
+The toolbar along the top of the chat gives you five additional views:
+
+#### 📁 Datasets
+See every data source you have connected in this session. Upload additional files here without leaving the chat. Remove sources you no longer need.
+
+#### 🗂 Schema Explorer
+Browse the full structure of all your connected tables — every column name, data type, primary key, and foreign key — laid out clearly. Useful when you want to know exactly what fields are available before asking a question.
+
+#### 🔗 Relationships
+The platform automatically infers how your tables relate to each other — which columns join to which. Each detected relationship shows a confidence score and a one-click **Copy JOIN SQL** button.
+
+#### 📊 Data Profile
+Get a full statistical report on every column in every table: row count, null percentage, distinct value count, min/max/mean for numeric columns, and a data quality grade (A–D). Any statistical **anomalies** (outliers detected via IQR analysis) are flagged automatically so you know where your data may have issues before you start querying.
+
+#### 📌 Pinned Insights
+All the responses you pinned appear here as a dashboard. When you are ready to share your findings, click **Generate Presentation** to export your pinned insights as a PowerPoint deck — charts, narratives, and all — ready to present.
 
 ---
 
