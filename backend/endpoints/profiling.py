@@ -105,12 +105,10 @@ def _dialect_for(source) -> str:
 def _fetch_sql_table(source, tname: str) -> pd.DataFrame | None:
     """Fetch an entire SQL table into a pandas DataFrame."""
     try:
+        is_mysql = str(source.engine.url).startswith("mysql")
+        qt = '`{}`'.format(tname.replace('`', '``')) if is_mysql else '"{}"'.format(tname.replace('"', '""'))
         with source.engine.connect() as conn:
-            if str(source.engine.url).startswith("mysql"):
-                conn.execute(sa.text(
-                    "SET SESSION sql_mode=(SELECT CONCAT(@@sql_mode, ',ANSI_QUOTES'))"
-                ))
-            result = conn.execute(sa.text('SELECT * FROM "{}"'.format(tname)))
+            result = conn.execute(sa.text('SELECT * FROM {}'.format(qt)))
             cols = list(result.keys())
             rows = result.fetchall()
         return pd.DataFrame(rows, columns=cols)

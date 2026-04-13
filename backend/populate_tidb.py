@@ -1,6 +1,9 @@
 """Populate a remote TiDB Cloud (MySQL-compatible) instance with sample datasets."""
+from dotenv import load_dotenv
+load_dotenv()
 import pandas as pd
 import sqlalchemy as sa
+from sqlalchemy import event
 import os
 import glob
 
@@ -23,7 +26,7 @@ def populate_tidb():
     database = os.environ.get("TIDB_DATABASE", "test")
 
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    sample_data_dir = os.path.join(root_dir, "..", "sample_data")
+    sample_data_dir = os.path.join(root_dir, "sample_data")
 
     excel_path = _find_sample_excel(sample_data_dir)
     print("Using sample file: {}".format(os.path.basename(excel_path)))
@@ -39,18 +42,44 @@ def populate_tidb():
             connect_args={"ssl": {"verify_identity": True}}
         )
 
-        for sheet in SHEETS:
-            table_name = sheet.lower()
-            print("  Uploading sheet '{}' → table '{}'...".format(sheet, table_name))
-            df = pd.read_excel(excel_path, sheet_name=sheet)
-            df.columns = [c.strip().replace(" ", "_").lower() for c in df.columns]
-            df.to_sql(table_name, engine, if_exists="replace", index=False)
-            print("    {} rows inserted.".format(len(df)))
-
-        print("TiDB population complete!")
+        # Disable strict mode for every connection in the pool so to_sql never
+        # gets a connection that would reject rows due to strict validation.
+        @event.listens_for(engine, "connect")
+        def _disable_strict_mode(dbapi_conn, _record):
+            cursor = dbapi_conn.cursor()
+            cursor.execute("SET SESSION sql_mode = ''")
+            cursor.close()
 
     except Exception as exc:
-        print("Error during population: {}".format(exc))
+        print("Failed to create engine: {}".format(exc))
+        return
+
+    success = 0
+    for sheet in SHEETS:
+        table_name = sheet.lower()
+        print("  Uploading sheet '{}' → table '{}'...".format(sheet, table_name))
+        try:
+            df = pd.read_excel(excel_path, sheet_name=sheet)
+            df.columns = [c.strip().replace(" ", "_").lower() for c in df.columns]
+            # Coerce object columns to string so MySQL doesn't reject mixed types
+            for col in df.select_dtypes(include=["object", "str"]).columns:
+                df[col] = df[col].where(df[col].isna(), df[col].astype(str))
+            # Coerce datetimes to string to avoid MySQL out-of-range errors
+            for col in df.select_dtypes(include=["datetime64[ns]", "datetime64"]).columns:
+                df[col] = df[col].astype(str).replace("NaT", None)
+
+            # Drop first so to_sql never needs to reflect a potentially missing table
+            with engine.connect() as conn:
+                conn.execute(sa.text("DROP TABLE IF EXISTS `{}`".format(table_name)))
+                conn.commit()
+
+            df.to_sql(table_name, engine, if_exists="fail", index=False, chunksize=500)
+            print("    {} rows inserted.".format(len(df)))
+            success += 1
+        except Exception as exc:
+            print("    ERROR for sheet '{}': {}".format(sheet, exc))
+
+    print("TiDB population complete! ({}/{} tables)".format(success, len(SHEETS)))
 
 
 if __name__ == "__main__":

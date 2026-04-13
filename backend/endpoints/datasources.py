@@ -8,7 +8,7 @@ that seeds a pre-built sample dataset for immediate exploration.
 from fastapi import APIRouter, UploadFile, File, Form
 from typing import List
 from fastapi.responses import JSONResponse
-from core.connection_manager import ConnectionManager, DatabaseKind
+from core.connection_manager import ConnectionManager, DatabaseKind, friendly_db_error
 from core.source_registry import register_source, lookup_source, enumerate_sources, unregister_source
 import tempfile, os, shutil, glob as _glob, pandas as pd, sqlalchemy as sa, json
 from datetime import datetime
@@ -24,7 +24,7 @@ async def test_source(payload: dict):
         db_type = DatabaseKind(payload["db_type"])
         return connector.test_connection(db_type, payload.get("config", {}))
     except Exception as exc:
-        return {"success": False, "error": str(exc), "table_count": 0}
+        return {"success": False, "error": friendly_db_error(exc), "table_count": 0}
 
 
 @router.post("/api/sources/connect")
@@ -45,7 +45,7 @@ async def connect_source(payload: dict):
             "is_connected": source.is_connected
         }
     except Exception as exc:
-        return JSONResponse(status_code=400, content={"error": str(exc)})
+        return JSONResponse(status_code=400, content={"error": friendly_db_error(exc)})
 
 
 @router.post("/api/sources/upload")

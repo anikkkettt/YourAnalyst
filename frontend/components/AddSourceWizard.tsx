@@ -407,6 +407,13 @@ export function AddSourceWizard({ sessionId, onClose, onAdded }: AddSourceWizard
                       <input className="glass-input" placeholder={SQL_DIALECTS.find(d => d.id === sqlDialect)?.port || '5432'} value={config.port || ''} onChange={e => setConfig(p => ({ ...p, port: e.target.value }))} />
                     </div>
                   </div>
+                  {sqlDialect === 'postgresql' && (
+                    <p style={{ margin: '0 0 8px', fontSize: '0.68rem', color: 'var(--text-muted)', lineHeight: 1.45 }}>
+                      <strong style={{ color: 'var(--text-secondary)' }}>Supabase:</strong> If <code style={{ fontSize: '0.65rem' }}>db.&lt;ref&gt;.supabase.co</code> fails to connect, use{' '}
+                      <strong>Session pooler</strong> from Dashboard → Connect: host <code style={{ fontSize: '0.65rem' }}>aws-0-&lt;region&gt;.pooler.supabase.com</code>, port <code style={{ fontSize: '0.65rem' }}>5432</code>, username{' '}
+                      <code style={{ fontSize: '0.65rem' }}>postgres.&lt;project-ref&gt;</code> (IPv4-friendly).
+                    </p>
+                  )}
 
                   {/* Single fields */}
                   {[

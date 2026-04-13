@@ -41,6 +41,30 @@ class LiveSource:
     config: dict
 
 
+def friendly_db_error(exc: Exception) -> str:
+    """Turn low-level driver errors into actionable messages for the UI."""
+    msg = str(exc)
+    if "could not translate host name" in msg.lower() or "name or service not known" in msg.lower():
+        if "supabase.co" in msg.lower():
+            return (
+                "DNS could not resolve this Supabase host. The direct host db.<ref>.supabase.co is often IPv6-only; "
+                "many Windows and office networks only use IPv4, which looks like a DNS failure. "
+                "Fix: In Supabase Dashboard click Connect → use Session pooler: set Host to "
+                "aws-0-<region>.pooler.supabase.com (your region, e.g. us-east-1), Port 5432, "
+                "Username postgres.<your-project-ref> (note the dot), same database password. "
+                "See https://supabase.com/docs/guides/database/connecting-to-postgres — Original: {}".format(msg)
+            )
+        return (
+            "Could not resolve the database hostname (DNS). Verify the host string, that the project is running, "
+            "and that your network allows DNS and outbound access to the database port. Original: {}".format(msg)
+        )
+    if "connection refused" in msg.lower():
+        return "Connection refused — check host, port, and that the database accepts remote connections. Original: {}".format(msg)
+    if "password authentication failed" in msg.lower() or "authentication failed" in msg.lower():
+        return "Authentication failed — check username and password. Original: {}".format(msg)
+    return msg
+
+
 class ConnectionManager:
 
     def _safe_name(self, name: str) -> str:
@@ -88,7 +112,7 @@ class ConnectionManager:
             engine.dispose()
             return {"success": True, "error": None, "table_count": len(tables), "tables": tables}
         except Exception as e:
-            return {"success": False, "error": str(e), "table_count": 0}
+            return {"success": False, "error": friendly_db_error(e), "table_count": 0}
 
     def connect(self, db_type: DatabaseKind, params: dict, name: str, session_id: str, selected_tables: list = None) -> LiveSource:
         """Establish a persistent connection and return a fully-populated LiveSource."""
@@ -174,10 +198,10 @@ class ConnectionManager:
                      "nullable": c.get("nullable", True)}
                     for c in inspector.get_columns(tname)]
             try:
+                is_mysql = str(engine.url).startswith("mysql")
+                qt = '`{}`'.format(tname.replace('`', '``')) if is_mysql else '"{}"'.format(tname.replace('"', '""'))
                 with engine.connect() as con:
-                    if str(engine.url).startswith("mysql"):
-                        con.execute(sa.text("SET SESSION sql_mode=(SELECT CONCAT(@@sql_mode, ',ANSI_QUOTES'))"))
-                    count = con.execute(sa.text(f"SELECT COUNT(*) FROM \"{tname}\"")).scalar()
+                    count = con.execute(sa.text(f"SELECT COUNT(*) FROM {qt}")).scalar()
             except Exception:
                 count = -1
             tables[tname] = {"row_count": count, "columns": cols}

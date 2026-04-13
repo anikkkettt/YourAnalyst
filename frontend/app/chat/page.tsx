@@ -67,6 +67,8 @@ function ChatPageInner() {
   const [cachedRelationships, setCachedRelationships] = useState<any[]>([]);
   const [relHasRun, setRelHasRun] = useState(false);
   const [relInferring, setRelInferring] = useState(false);
+  const [profileData, setProfileData] = useState<Record<string, any>>({});
+  const [profileLoading, setProfileLoading] = useState<Record<string, boolean>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const searchParams = useSearchParams();
@@ -100,6 +102,41 @@ function ChatPageInner() {
     setSchemaLoading(false);
   };
 
+  const scanSource = async (sourceId: string) => {
+    setProfileLoading(prev => ({ ...prev, [sourceId]: true }));
+    try {
+      const data = await getSourceProfile(sourceId);
+      setProfileData(prev => ({ ...prev, [sourceId]: data }));
+    } catch { /* ignore */ }
+    setProfileLoading(prev => ({ ...prev, [sourceId]: false }));
+  };
+
+  const prefetchAll = (srcs: DataSource[]) => {
+    if (srcs.length === 0) return;
+    // Schema
+    fetchSchemaForSources(srcs);
+    // Relationships
+    setRelInferring(true);
+    Promise.all(srcs.map(async (s) => {
+      try {
+        const data = await getSourceRelationships(s.source_id);
+        return (data.relationships || []).map((r: any) => ({ ...r, sourceName: s.name, sourceId: s.source_id }));
+      } catch { return []; }
+    })).then(arrays => {
+      setCachedRelationships(arrays.flat());
+      setRelInferring(false);
+      setRelHasRun(true);
+    });
+    // Profile
+    srcs.forEach(s => {
+      setProfileLoading(prev => ({ ...prev, [s.source_id]: true }));
+      getSourceProfile(s.source_id)
+        .then(data => setProfileData(prev => ({ ...prev, [s.source_id]: data })))
+        .catch(() => {})
+        .finally(() => setProfileLoading(prev => ({ ...prev, [s.source_id]: false })));
+    });
+  };
+
   useEffect(() => {
     fetchSources();
   }, [sessionId]);
@@ -122,8 +159,19 @@ function ChatPageInner() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, chatLoading]);
 
+  // Prefetch all analytics as soon as sources are available
+  const prefetchedSourcesRef = useRef<string>('');
   useEffect(() => {
-    if (mainTab === 'schema' && activeSources.length > 0 && Object.keys(schemaData).length === 0) {
+    const key = activeSources.map(s => s.source_id).join(',');
+    if (activeSources.length > 0 && key !== prefetchedSourcesRef.current) {
+      prefetchedSourcesRef.current = key;
+      prefetchAll(activeSources);
+    }
+  }, [activeSources.map(s => s.source_id).join(',')]);
+
+  // Fallback: fetch schema if user opens tab before prefetch ran
+  useEffect(() => {
+    if (mainTab === 'schema' && activeSources.length > 0 && Object.keys(schemaData).length === 0 && !schemaLoading) {
       fetchSchemaForSources(activeSources);
     }
   }, [mainTab, activeSources.length]);
@@ -340,7 +388,7 @@ function ChatPageInner() {
 
           {/* Data Profile Panel */}
           {mainTab === 'profile' && (
-            <DataProfilePanel sources={activeSources} />
+            <DataProfilePanel sources={activeSources} profileData={profileData} profileLoading={profileLoading} scanSource={scanSource} />
           )}
 
           {/* Pinned Insights Dashboard */}
@@ -727,9 +775,12 @@ function ChatPageInner() {
             setShowWizard(false);
             fetchSources();
           }}
-          onAdded={() => {
+          onAdded={(newSources) => {
             setShowWizard(false);
             fetchSources();
+            // Reset prefetch key so the new sources trigger a fresh prefetch
+            prefetchedSourcesRef.current = '';
+            if (newSources.length > 0) prefetchAll(newSources);
           }}
         />
       )}
@@ -2236,7 +2287,8 @@ function RelationshipViewer({ sources, onCopyStatus, cachedRelationships, setCac
   const relationships = cachedRelationships as InferredRel[];
 
   useEffect(() => {
-    if (sources.length === 0 || relHasRun) return;
+    // prefetchAll already handles this; only run here if prefetch somehow didn't start
+    if (sources.length === 0 || relHasRun || relInferring) return;
     let cancelled = false;
     setRelInferring(true);
     Promise.all(sources.map(async (s) => {
@@ -2252,7 +2304,7 @@ function RelationshipViewer({ sources, onCopyStatus, cachedRelationships, setCac
       }
     });
     return () => { cancelled = true; };
-  }, [sources.map(s => s.source_id).join(','), relHasRun]);
+  }, [sources.map(s => s.source_id).join(','), relHasRun, relInferring]);
 
   const copyJoinSQL = (rel: InferredRel) => {
     const sql = `SELECT *\nFROM ${rel.left_table}\nJOIN ${rel.right_table} ON ${rel.left_table}.${rel.left_column} = ${rel.right_table}.${rel.right_column}`;
@@ -2429,20 +2481,14 @@ function RelationshipViewer({ sources, onCopyStatus, cachedRelationships, setCac
 // ============================================================
 // Data Profile Panel
 // ============================================================
-function DataProfilePanel({ sources }: { sources: DataSource[] }) {
-  const [profileData, setProfileData] = useState<Record<string, any>>({});
-  const [loading, setLoading] = useState<Record<string, boolean>>({});
+function DataProfilePanel({ sources, profileData, profileLoading, scanSource }: {
+  sources: DataSource[];
+  profileData: Record<string, any>;
+  profileLoading: Record<string, boolean>;
+  scanSource: (sourceId: string) => void;
+}) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [modalTable, setModalTable] = useState<{ tname: string; tdata: any; grade: string } | null>(null);
-
-  const scanSource = async (sourceId: string) => {
-    setLoading(prev => ({ ...prev, [sourceId]: true }));
-    try {
-      const data = await getSourceProfile(sourceId);
-      setProfileData(prev => ({ ...prev, [sourceId]: data }));
-    } catch { /* ignore */ }
-    setLoading(prev => ({ ...prev, [sourceId]: false }));
-  };
 
   const nullColor = (pct: number) => pct > 20 ? '#ff716c' : pct > 5 ? '#FFCE54' : '#34d399';
   const qualityGrade = (pct: number) => pct >= 95 ? 'A' : pct >= 80 ? 'B' : pct >= 60 ? 'C' : 'D';
@@ -2459,7 +2505,7 @@ function DataProfilePanel({ sources }: { sources: DataSource[] }) {
     <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '1.25rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
       {sources.map(source => {
         const profile = profileData[source.source_id];
-        const isLoading = loading[source.source_id];
+        const isLoading = profileLoading[source.source_id];
 
         return (
           <div key={source.source_id} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 14, overflow: 'hidden', flexShrink: 0 }}>
