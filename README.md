@@ -31,7 +31,7 @@ A self-service analytics platform where you type a question in plain English and
 
 > **Watch the full walkthrough** — connecting a data source, asking natural-language questions, exploring the Trust Trace, and exporting results.
 
-<video src="screenshots/Recording 2026-04-13 144404 (1).mp4" controls width="100%"></video>
+**[▶ Click to watch the demo video](screenshots/Recording%202026-04-13%20144404%20(1).mp4)**
 
 <br/>
 
