@@ -27,12 +27,21 @@ A self-service analytics platform where you type a question in plain English and
 
 <br/>
 
+### 🎬 Platform Demo
+
+> **Watch the full walkthrough** — connecting a data source, asking natural-language questions, exploring the Trust Trace, and exporting results.
+
+<video src="screenshots/Recording 2026-04-13 144404 (1).mp4" controls width="100%"></video>
+
+<br/>
+
 </div>
 
 ---
 
 ## 📋 Table of Contents
 
+- [Platform Demo](#-platform-demo)
 - [Overview](#-overview)
 - [Key Features](#-key-features)
 - [Architecture](#-architecture)
