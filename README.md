@@ -481,12 +481,6 @@ All configuration is via environment variables. **Never commit your `.env` file.
 # ── Required ─────────────────────────────────────────────────────────
 GROQ_API_KEYS=gsk_key1_here,gsk_key2_here,gsk_key3_here
 
-# ── Optional: Error Reporting ─────────────────────────────────────────
-FEEDBACK_EMAIL=your_email@example.com
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=your_email@gmail.com
-SMTP_PASS=your_app_password
 
 # ── Optional: Cloud Database Connections ─────────────────────────────
 SUPABASE_HOST=your-project.supabase.co
