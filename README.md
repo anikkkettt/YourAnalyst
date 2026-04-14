@@ -168,7 +168,6 @@ All the responses you pinned appear here as a dashboard. When you are ready to s
 | **Workplaces** | Organise data sources into named workplaces, each with its own connections and isolated chat context. |
 | **Multi-Source Querying** | Connect PostgreSQL, MySQL, or upload CSV/Excel files — ask questions that span across all connected sources in a single conversation. Excel workbooks load every sheet as a separate table. |
 | **Conversation History** | Past chats are grouped by workplace — revisit any previous analysis with the full thread intact. |
-| **Guided Onboarding** | First-time users see a step-by-step tour of workplaces, source connections, the chat bar, and all analytics panels. |
 
 ### Explore & Understand Your Data
 
@@ -187,7 +186,6 @@ All the responses you pinned appear here as a dashboard. When you are ready to s
 |---|---|
 | **Natural Language Querying** | Ask any data question in plain English. A pipeline of 10 AI agents translates it to SQL, runs it, and returns a clear narrative answer with a chart. |
 | **Self-Correcting SQL Engine** | If the generated SQL fails or returns the wrong result, the system automatically rewrites it — up to 2 retries — without the user seeing an error. |
-| **Semantic Metric Layer** | Business terms like "revenue", "churn", and "active users" are mapped to consistent SQL expressions so the same word always means the same thing. |
 | **Automatic Visualisation** | The system picks the best chart type (bar, line, pie, scatter) based on the data shape and renders it inline with the answer. |
 | **Follow-up Suggestions** | Three contextual next questions appear as clickable chips after every answer to keep the exploration going. |
 
@@ -208,18 +206,11 @@ All the responses you pinned appear here as a dashboard. When you are ready to s
 | **Report Builder (PPTX)** | Export all pinned insights as a polished PowerPoint — includes a title slide, one slide per insight with a native chart, and data table slides. |
 | **CSV Export** | Download any result table as a CSV file directly from the chat. |
 
-### Under the Hood
-
-| Feature | What it does |
-|---|---|
-| **LLM Key Rotation** | A pool of Groq API keys rotates automatically on rate-limit errors to maximise uptime on the free tier. |
-| **Glassmorphism Dark UI** | Frosted-glass dark theme across every surface — navbar, modals, cards, chat bar, and tabs — designed for extended use. |
 
 ---
 
 ## 🏗 Architecture
 
-Diagrams are PNG files in [`docs/images/`](./docs/images/). Regenerate them when the architecture changes.
 
 ### User Journey
 
@@ -426,8 +417,8 @@ youranalyst/
 #### 1. Clone the repository
 
 ```bash
-git clone https://github.com/Abhay-BITS/datawhisperer-natwest.git
-cd datawhisperer-natwest
+git clone https://github.com/anikkkettt/YourAnalyst
+cd YourAnalyst
 ```
 
 #### 2. Backend setup
